@@ -136,7 +136,7 @@ CalcKernel <- function(
                       Start.Date=min(seq.sf$date1234),
                       End.Date=max(seq.sf$date1234),
                       num.days=length(unique(jul)),
-                      errors=ifelse(class(bb)=="try-error", attr(bb, "condition")$message, "Ran too long or other kernel problem")))  
+                      errors=ifelse(class(kern)=="try-error", attr(kern, "condition")$message, "Ran too long or other kernel problem")))  
     
   }
   
