@@ -330,7 +330,7 @@ CalcPopUse <- function(
   codes <- sort(unique(classifiedPoly$contour))
   areas <- do.call(rbind, lapply(codes, function(i){
     data.frame(contour=i,
-               area_SqKm=as.numeric(st_area(st_union(classifiedPoly[classifiedPoly$contour == i,])))/1000000)
+               area_SqKm=as.numeric(st_area(st_union(classifiedPoly[classifiedPoly$contour == i,], is_coverage = TRUE)))/1000000)
   }))
   
   write.csv(areas, paste0(out.fldr, "/PopUse_contour_areas.csv"), row.names = FALSE)
