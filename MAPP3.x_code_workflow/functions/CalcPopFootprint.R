@@ -144,8 +144,7 @@ CalcPopFootprint <- function(
                                       paste0("contours of ", paste(contour.levels2_names,collapse = ", "), 
                                              " represent the following threshold number of individuals: ", 
                                              paste(floor(contour.levels2[1:(length(contour.levels2)-1)]*numb_ids)+1,collapse=" - "),".")))
-  
-  
+
   # break up the raster into its contours
   classifiedRaster <- cut(Pop.Foot.perc, breaks=contour.levels2)
   
@@ -155,7 +154,7 @@ CalcPopFootprint <- function(
   
   # add proper labels
   classifiedPoly <- classifiedPoly[order(classifiedPoly$layer),]
-  classifiedPoly$contour <- contour.levels2_names
+  classifiedPoly$contour <- contour.levels2_names[classifiedPoly$layer]  # put only the names of the layers that were identified
   classifiedPoly$layer <- NULL
   
   # plot(classifiedPoly, color=classifiedPoly)

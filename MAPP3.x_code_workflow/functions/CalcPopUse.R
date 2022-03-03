@@ -279,7 +279,8 @@ CalcPopUse <- function(
   
   # add proper labels
   classifiedPoly <- classifiedPoly[order(classifiedPoly$layer),]
-  classifiedPoly$contour <- contour.levels2[2:length(contour.levels2)]
+  contour.levels2 <- contour.levels2[2:length(contour.levels2)]  # reomve the 0
+  classifiedPoly$contour <- contour.levels2[classifiedPoly$layer]  # put only the names of the layers that were identified
   classifiedPoly$layer <- NULL
   
   # plot(classifiedPoly, color=classifiedPoly)
