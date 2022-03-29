@@ -214,6 +214,7 @@ CalcPopUse(
   UD.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/UDs_Test", 
   out.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/UD_out", 
   seas2merge = c("spring", "fall"), 
+  udFootprintsToDrop = NULL,
   merge.order = c("year", "id"),  
   contour = 99,   
   contour.type = "Area",    
@@ -228,6 +229,7 @@ CalcPopUse(
 CalcPopFootprint(
   Foot.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_Test", 
   out.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_out", 
+  udFootprintsToDrop = NULL,
   seas2merge = c("spring", "fall"), 
   contour.levels = c(5,10,15,20,30),  
   min_area_drop = 20000,  
