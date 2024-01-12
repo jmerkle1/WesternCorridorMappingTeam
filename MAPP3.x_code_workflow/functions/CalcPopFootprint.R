@@ -2,9 +2,8 @@
 #'
 #' @param Foot.fldr This is the location of the folder where the season folders are located for footprints.
 #' @param out.fldr Folder to store outputs.
-#' @param udFootprintsToDrop Character string of names of UDs to ignore in the analysis. Do not include the '.tif' extension. Default is NULL
 #' @param seas2merge Character vector of the seasons to merge together. These values must match folder names in Foot.fldr. If vector of length 1, no seasons will be merged.
-#' @param contour.levels Percents (ranging from 1 to 90, in whole numbers) of contours. Do not include a 0. Max value is 90. Must be ascending. Represents % of animals using an area.
+#' @param contour.levels Percents (ranging from 1 to 99, in whole numbers) of contours. Do not include a 0. Max value is 99. Must be ascending. Represents % of animals using an area.
 #' @param min_area_drop Do you want to remove some small polygons from the output? Numeric value in square meters.
 #' @param min_area_fill Do you want to fill in holes with areas smaller than this value? Numeric value in square meters.
 #' @param simplify Do you want to smooth the contours so they aren't gridlooking? TRUE or FALSE
@@ -19,8 +18,8 @@
 #' @export
 
 CalcPopFootprint <- function(
-  Foot.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_Test",
-  out.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_out",
+  Foot.fldr = "",
+  out.fldr = "",
   udFootprintsToDrop = NULL,
   seas2merge = c("spring", "fall"),
   contour.levels = c(5,10,15,20,30),
@@ -32,13 +31,12 @@ CalcPopFootprint <- function(
 ){
 
   #manage packages
-  if(all(c("sf","raster","stringr","smoothr", "rgeos") %in% installed.packages()[,1])==FALSE)
-    stop("You must install the following packages: sf, raster, stringr, smoothr, rgeos")
+  if(all(c("sf","terra","stringr","smoothr") %in% installed.packages()[,1])==FALSE)
+    stop("You must install the following packages: sf, terra, stringr, smoothr")
   require(sf)
-  require(raster)
+  require(terra)
   require(stringr)
   require(smoothr)
-  require(rgeos)
 
   # some checks
   if(length(dir(out.fldr))> 0)
@@ -47,8 +45,8 @@ CalcPopFootprint <- function(
     stop("There are no Footprints in your Foot.fldr!")
   if(any(!seas2merge %in% dir(Foot.fldr)))
     stop("One or more of your seas2merge values do not represent season folders inside your Foot.fldr!")
-  if(any(!contour.levels %in% 1:90))
-    stop("contour.levels must be integers between 1 and 100!!")
+  # if(any(!contour.levels %in% 1:99))
+  #   stop("contour.levels must be integers between 1 and 99!!")
   if(any(!contour.levels == sort(contour.levels)))
     stop("contour.levels must be written in ascending order!")
 
@@ -84,13 +82,6 @@ CalcPopFootprint <- function(
   #   nms[[i]] <- sub(".tif", "", list.files(paste0(UD.fldr, "/", seas2merge[i]), ".tif$", full.names=FALSE))
   # }
 
-
-
-
-
-
-
-
   fls <- unlist(fls)
   nms <- unlist(nms)
 
@@ -121,31 +112,31 @@ CalcPopFootprint <- function(
     sub1.fls <- fls[ids %in% ids.unique[i]]
     sub1.nms <- nms[ids %in% ids.unique[i]]
 
-    s <- stack(sub1.fls)
-    if(nlayers(s)>1){
+    s <- terra::rast(sub1.fls)
+    if(terra::nlyr(s)>1){
       s <- sum(s)
-      s <- reclassify(s, rcl=matrix(c(0.9,Inf, 1), ncol=3))
+      s <- terra::classify(s, rcl=matrix(c(0.9,Inf, 1), ncol=3)) # since this is 1 ID, any values in here should just be 1
     }  # end of work if there are multiple layers in s
 
     # write out file. Will be named by first merge underscore second merge.
-    writeRaster(s, filename = paste0(out.fldr, "/ids/", ids.unique[i], ".tif"),
-                format = "GTiff", overwrite = TRUE, datatype='INT1U')
+    terra::writeRaster(s, filename = paste0(out.fldr, "/ids/", ids.unique[i], ".tif"),
+                filetype = "GTiff", overwrite = TRUE, datatype='INT1U')
   } # end of loop over opt1
   rm(s)
   gc()
 
   # Create final population UD
-  Pop.Foot <- stack(list.files(paste0(out.fldr, "/ids"), ".tif$", full.names = TRUE))  # bring them back in to do mean value. Maybe do need upper level for year so these can go in there!
-  if(nlayers(Pop.Foot)>1){
+  Pop.Foot <- terra::rast(list.files(paste0(out.fldr, "/ids"), ".tif$", full.names = TRUE))  # bring them back in to do mean value. Maybe do need upper level for year so these can go in there!
+  if(terra::nlyr(Pop.Foot)>1){
     Pop.Foot <- sum(Pop.Foot)  # sum up values
   }
   # calculate the percent of individuals using an area
   Pop.Foot.perc <- Pop.Foot/numb_ids
 
-  writeRaster(Pop.Foot, filename = paste0(out.fldr, "/Pop_Footprint_NumbIds.tif"),  # Number of ids
-              format = "GTiff", overwrite = TRUE, datatype='INT2U')
-  writeRaster(Pop.Foot.perc, filename = paste0(out.fldr, "/Pop_Footprint_PropIds.tif"),  # proportion of ids
-              format = "GTiff", overwrite = TRUE, datatype='FLT4S')
+  terra::writeRaster(Pop.Foot, filename = paste0(out.fldr, "/Pop_Footprint_NumbIds.tif"),  # Number of ids
+              filetype = "GTiff", overwrite = TRUE, datatype='INT2U')
+  terra::writeRaster(Pop.Foot.perc, filename = paste0(out.fldr, "/Pop_Footprint_PropIds.tif"),  # proportion of ids
+              filetype = "GTiff", overwrite = TRUE, datatype='FLT4S')
 
   rm(Pop.Foot, Pop.Foot.perc)
   gc()
@@ -156,7 +147,7 @@ CalcPopFootprint <- function(
   # Final Contours ####
   # ------------------#
 
-  Pop.Foot.perc <- raster(paste0(out.fldr, "/Pop_Footprint_PropIds.tif"))
+  Pop.Foot.perc <- terra::rast(paste0(out.fldr, "/Pop_Footprint_PropIds.tif"))
 
   contour.levels2 <- contour.levels[(contour.levels/100) > (2/numb_ids)]
   contour.levels2 = c(0, c(2/numb_ids)-0.0001, (contour.levels2/100)-0.0001, .99)  #this starts with low 1 or more, then low 2 or more, then the other percents
@@ -174,20 +165,19 @@ CalcPopFootprint <- function(
                                              " represent the following threshold number of individuals: ",
                                              paste(floor(contour.levels2[1:(length(contour.levels2)-1)]*numb_ids)+1,collapse=" - "),".")))
 
-  # break up the raster into its contours
-  classifiedRaster <- cut(Pop.Foot.perc, breaks=contour.levels2)
+  # compute the contours
+  rcl <- matrix(c(contour.levels2[1:(length(contour.levels2)-1)],
+                  contour.levels2[2:length(contour.levels2)],
+                  contour.levels2_names), ncol=3, byrow=FALSE)
+  classifiedRaster = terra::classify(Pop.Foot.perc, rcl, others=NA)
 
   # extract the contours as polygons
-  classifiedPoly <- rasterToPolygons(classifiedRaster,dissolve=T)
-  classifiedPoly <- as(classifiedPoly, "sf")
-
+  classifiedPoly <- terra::as.polygons(classifiedRaster,dissolve=T)
+  classifiedPoly <- sf::st_as_sf(classifiedPoly)
+  
   # add proper labels
-  classifiedPoly <- classifiedPoly[order(classifiedPoly$layer),]
-  classifiedPoly$contour <- contour.levels2_names[classifiedPoly$layer]  # put only the names of the layers that were identified
-  classifiedPoly$layer <- NULL
-
-  # plot(classifiedPoly, color=classifiedPoly)
-  # mapview(classifiedPoly, zcol="contour")
+  # rename the column
+  colnames(classifiedPoly) <- c("contour","geometry")
 
   # aggregate the different corridor levels
   # make it so the top level includes the ones below it!

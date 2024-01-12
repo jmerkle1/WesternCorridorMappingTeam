@@ -11,12 +11,12 @@
 #' @param mult4buff Proportion of space around the extent of seq.sf (i.e., a buffer) that is used to subsample the population grid for analysis. Typically 0.2 or 0.3.
 #' @param subsample If NULL (the default), no subsampling will take place. If numeric, will be used as the number of random locations to sample per julian day in seq.sf.
 #' @param max.timeout # Max amount of time (in seconds) it should run before timing out. Default is 3600*12 (12 hours).
-#' 
+#'
 #' @return Returns a dataframe describing the results of the analysis, as well as writes out a UD or occurrence distribution and a footprint (as tif file).
 #'
 #' @examples
 #' # To come.
-#' 
+#'
 #' @export
 
 CalcKernel <- function(
@@ -29,64 +29,65 @@ CalcKernel <- function(
   smooth.param=NULL,
   contour=99,
   mult4buff=0.3,
-  subsample=NULL, 
-  max.timeout=3600*12   
+  subsample=NULL,
+  max.timeout=3600*12
 ){
-  
+
   #manage packages
-  if(all(c("sf","raster","adehabitatHR","R.utils","dplyr") %in% installed.packages()[,1])==FALSE)
-    stop("You must install the following packages: sf, raster, adehabitatHR, R.utils, dplyr")
+  if(all(c("sf","terra","adehabitatHR","R.utils","dplyr") %in% installed.packages()[,1])==FALSE)
+    stop("You must install the following packages: sf, terra, adehabitatHR, R.utils, dplyr")
   require(sf)
-  require(raster)
+  require(terra)
   require(adehabitatHR)
   require(R.utils)
   require(dplyr)
-  
+
   if("sf" %in% class(seq.sf)==FALSE)
     stop("seq.sf must be a sf data frame from package sf!")
-  
+
   # load up the population grid
-  grd <- raster(Pop.grd)
-  
+  grd <- terra::rast(Pop.grd)
+
   # ensure data are in same projection as grid
-  seq.sf <- st_transform(seq.sf, crs=projection(grd))
-  
+  seq.sf <- sf::st_transform(seq.sf, crs=sf::st_crs(grd))
+
   # work on date
-  seq.sf$date1234 <- st_drop_geometry(seq.sf)[,date.name]  # make new column for date
+  seq.sf$date1234 <- sf::st_drop_geometry(seq.sf)[,date.name]  # make new column for date
   if("POSIXct" %in% class(seq.sf$date1234) == FALSE)
     stop("Your date.name column should be POSIXct!")
   if(any(is.na(seq.sf$date1234)))
     stop("You have NAs in your date.name column!")
-  
+
   # code to subsample the data, if necessary
   if(class(subsample) != "NULL"){
     seq.sf$year <- as.numeric(strftime(seq.sf$date1234, format = "%Y", tz = attr(seq.sf$date1234,"tzone")))
     seq.sf$jul <- as.numeric(strftime(seq.sf$date1234, format = "%j", tz = attr(seq.sf$date1234,"tzone")))
     seq.sf$yr_jul <- paste(seq.sf$year, seq.sf$jul, sep="_")
+    
     # subsample the data using slice in dplyr
-    seq.sf <- seq.sf %>% 
-      group_by(yr_jul) %>% 
+    seq.sf <- seq.sf %>%
+      group_by(yr_jul) %>%
       slice_sample(n=subsample, replace=FALSE) %>% # I had to use some dplyr, sorry!
-      ungroup() %>% 
-      as.data.frame() %>% 
-      st_set_geometry("geometry") %>% 
+      ungroup() %>%
+      as.data.frame() %>%
+      st_set_geometry("geometry") %>%
       arrange(date1234)
   }
-  
+
   jul <- as.numeric(strftime(seq.sf$date1234, format = "%j", tz = attr(seq.sf$date1234,"tzone")))
-  
-  
+
+
   #prepare only the cells to run kernel over
-  ext2 <- raster::extent(seq.sf)
+  ext2 <- terra::ext(seq.sf)
   multiplyers <- c((ext2[2]-ext2[1])*mult4buff, (ext2[4]-ext2[3])*mult4buff)   # add about mult4buff around the edges of your extent (you can adjust this if necessary)
-  ext2 <- raster::extend(ext2, multiplyers)
-  cels <- cellsFromExtent(grd, ext2)
-  grd2 <- crop(grd, ext2)
-  if(length(cels)!=ncell(grd2))
+  ext2 <- terra::extend(ext2, multiplyers)
+  cels <- terra::cells(grd, ext2)
+  grd2 <- terra::crop(grd, ext2)
+  if(length(cels)!=terra::ncell(grd2))
     stop("There is a problem with cropping down the population grid!")
   
   start.time <- Sys.time()
-  
+
   if(nrow(seq.sf) < 5){
     return(data.frame(seq.name=seq.name,
                       kernel.smooth.param=NA,
@@ -100,32 +101,32 @@ CalcKernel <- function(
                       num.days=length(unique(jul)),
                       errors="Less than 5 points."))
   }
-  
-  # this is the function to calculate the regular BB
+
+  # this is the function to calculate the regular kern
   if(class(smooth.param)=="NULL"){
     kern <- R.utils::withTimeout({
-      try(kernelUD(as(seq.sf$geometry,"Spatial"), 
-                   h="href", 
-                   grid=as(grd2, "SpatialPixels"), 
-                   kern="bivnorm"), 
+      try(kernelUD(as(seq.sf$geometry,"Spatial"),
+                   h="href",
+                   grid=as(raster::raster(grd2), "SpatialPixels"),
+                   kern="bivnorm"),
           silent=TRUE)
     }, envir=environment(), timeout = max.timeout, onTimeout = "warning")
-    
+
   }else{ #THIS IS forced smooth.param code
-    
+
     kern <- R.utils::withTimeout({
-      try(kernelUD(as(seq.sf$geometry,"Spatial"), 
-                   h=smooth.param, 
-                   grid=as(grd2, "SpatialPixels"), 
-                   kern="bivnorm"), 
+      try(kernelUD(as(seq.sf$geometry,"Spatial"),
+                   h=smooth.param,
+                   grid=as(raster::raster(grd2), "SpatialPixels"),
+                   kern="bivnorm"),
           silent=TRUE)
     }, envir=environment(), timeout = max.timeout, onTimeout = "warning")
-    
+
   } # end of section for fixed smooth.param
-  
+
   #write out results to file too, so if there is an error you don't loose all your work!
   if("try-error" %in% class(kern)){
-    
+
     return(data.frame(seq.name=seq.name,
                       kernel.smooth.param=NA,
                       grid.size=NA,
@@ -136,39 +137,46 @@ CalcKernel <- function(
                       Start.Date=min(seq.sf$date1234),
                       End.Date=max(seq.sf$date1234),
                       num.days=length(unique(jul)),
-                      errors=ifelse(class(kern)=="try-error", attr(kern, "condition")$message, "Ran too long or other kernel problem")))  
-    
+                      errors=ifelse(class(kern)=="try-error", attr(kern, "condition")$message, "Ran too long or other kernel problem")))
+
   }
-  
+
   h <- kern@h$h  # pull out the h smooth factor
+
+  #set to 0 any values that are outside of the < 0.9999 contour
+  kern <- terra::rast(raster::raster(kern)) # bring back into a spatrast object
   
   #set to 0 any values that are outside of the < 0.9999 contour
-  kern <- values(raster(kern))  # turn the estUD object to a raster
-  kern <- kern/sum(kern)  #rescale probabilities so they sum to equal 1
-  cutoff <- sort(kern, decreasing=TRUE)
+  mxx <- terra::global(kern, "sum")[1,1]
+  kern <- terra::app(kern, function(xxy){xxy/mxx}) #rescale probabilities so they sum to equal 1
+  
+  cutoff <- sort(terra::values(kern, mat=FALSE), decreasing=TRUE)
   vlscsum <- cumsum(cutoff)
   cutoff <- cutoff[vlscsum > .9999][1]
   kern[kern < cutoff] <- 0
-  kern <- kern/sum(kern)  #rescale probabilities so they sum to equal 1
+  
+  mxx <- terra::global(kern, "sum")[1,1]
+  kern <- terra::app(kern, function(xxy){xxy/mxx}) #rescale probabilities so they sum to equal 1  
   
   # write to raster
-  grd[cels] <- kern
-  writeRaster(grd, filename = paste0(UD.fldr,"/",seq.name,".tif"),
-              format = "GTiff", overwrite = TRUE, datatype='FLT4S')
+  grd[cels] <- terra::values(kern, mat=FALSE)
+  terra::writeRaster(grd, filename = paste0(UD.fldr,"/",seq.name,".tif"),
+              filetype = "GTiff", overwrite = TRUE, datatype='FLT4S')
   
   #output the footprint based on contour
-  cutoff <- sort(kern, decreasing=TRUE)
+  grd <- terra::rast(paste0(UD.fldr,"/",seq.name,".tif"))
+  cutoff <- sort(terra::values(grd, mat=FALSE), decreasing=TRUE)
   vlscsum <- cumsum(cutoff)
-  cutoff <- cutoff[vlscsum > (contour/100)][1]
-  kern <- ifelse(kern < cutoff, 0, 1)
-  grd[cels] <- kern
-  writeRaster(grd, filename = paste0(Footprint.fldr,"/",seq.name,".tif"),
-              format = "GTiff", overwrite = TRUE, datatype='INT1U')
-  
+  cutoff <- cutoff[vlscsum > contour/100][1]
+  grd <- terra::classify(grd, rcl=matrix(c(-Inf,cutoff,0,
+                                           cutoff, Inf, 1),ncol=3, byrow=TRUE))
+  terra::writeRaster(grd, filename = paste0(Footprint.fldr,"/",seq.name,".tif"),
+                     filetype = "GTiff", overwrite = TRUE, datatype='INT1U')
+
   toreturn <- data.frame(seq.name=seq.name,
                          kernel.smooth.param=h,
-                         grid.size=length(kern),
-                         grid.cell.size=res(grd)[1],
+                         grid.size=terra::ncell(kern),
+                         grid.cell.size=terra::res(grd)[1],
                          date.created=Sys.time(),
                          execution_time=paste(round(difftime(Sys.time(), start.time, units="min"),2)," minutes",sep=""),
                          num.locs=nrow(seq.sf),
@@ -176,11 +184,11 @@ CalcKernel <- function(
                          End.Date=max(seq.sf$date1234),
                          num.days=length(unique(jul)),
                          errors="None")
-  
+
   rm(kern, cutoff, vlscsum, grd)  # remove some of the larger objects
   gc()
-  
+
   #gather summary info
   return(toreturn)
-  
+
 } # end of function

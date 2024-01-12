@@ -10,33 +10,33 @@
 #' @return Returns a dataframe describing the results of the analysis, as well as writes out a footprint (as tif file).
 #'
 #' @examples
-#' # To come. 
-#' 
+#' # To come.
+#'
 #' @export
 
 CalcLineBuff <- function(
-  seq.sf=tmp,
-  seq.name="1_2020_spr",
-  date.name="date",
-  Footprint.fldr="./Footprints",
-  Pop.grd="./PopGrid_empty.tif",
-  buff=200
+    seq.sf=tmp,
+    seq.name="1_2020_spr",
+    date.name="date",
+    Footprint.fldr="./Footprints",
+    Pop.grd="./PopGrid_empty.tif",
+    buff=200
 ){
   
   #manage packages
-  if(all(c("sf","raster") %in% installed.packages()[,1])==FALSE)
-    stop("You must install the following packages: sf, raster")
+  if(all(c("sf","terra") %in% installed.packages()[,1])==FALSE)
+    stop("You must install the following packages: sf, terra")
   require(sf)
-  require(raster)
+  require(terra)
   
   if("sf" %in% class(seq.sf)==FALSE)
     stop("seq.sf must be a sf data frame from package sf!")
   
   # load up the population grid
-  grd <- raster(Pop.grd)
+  grd <- terra::rast(Pop.grd)
   
   # ensure data are in same projection as grid
-  seq.sf <- st_transform(seq.sf, crs=projection(grd))
+  seq.sf <- sf::st_transform(seq.sf, crs=sf::st_crs(grd))
   
   # work on date and make sure it's ordered by date
   seq.sf$date1234 <- st_drop_geometry(seq.sf)[,date.name]  # make new column for date
@@ -63,8 +63,22 @@ CalcLineBuff <- function(
                       errors="Only 1 point in sequence. No footprint was written out."))
   }
   
-  ln <- st_cast(st_combine(seq.sf), "LINESTRING")  # turn into a linestring
-  ln <- try(st_buffer(ln, dist=buff), silent=TRUE) # add buffer
+  seq.sf.xy1 <- sf::st_coordinates(seq.sf)
+  seq.sf.xy2 <- seq.sf.xy1[2:nrow(seq.sf.xy1),]
+  seq.sf.xy1 <- seq.sf.xy1[1:(nrow(seq.sf.xy1)-1), ]
+  ln <- lapply(1:nrow(seq.sf.xy1), function(i) {
+    return(sf::st_linestring(rbind(seq.sf.xy1[i,], seq.sf.xy2[i, ]), dim = "XY"))
+  })
+  ln <- sf::st_as_sfc(ln, crs = sf::st_crs(seq.sf))
+  
+  ln <- try(sf::st_buffer(ln, dist=buff), silent=TRUE) # add buffer
+
+  print('-------------')
+  print('-------------')
+  print('-------------')
+  print('-------------')
+  print(ln)
+  dawg<<-ln
   
   if("try-error" %in% class(ln)){   # if buffering failed
     #gather summary info
@@ -80,17 +94,19 @@ CalcLineBuff <- function(
                       errors="Buffering issue. No footprint was written out."))
   }
   
-  grd <- rasterize(as(ln, "Spatial"), grd, background=0) # rasterize onto the grid. 
+  ln <- sf::st_union(ln)  # union up all the buffered line segments
   
-  writeRaster(grd, filename = paste0(Footprint.fldr,"/",seq.name,".tif"),
-              format = "GTiff", overwrite = TRUE, datatype='INT1U')
+  grd <- terra::rasterize(vect(ln), grd, background=0) # rasterize onto the grid.
+  
+  terra::writeRaster(grd, filename = paste0(Footprint.fldr,"/",seq.name,".tif"),
+              filetype = "GTiff", overwrite = TRUE, datatype='INT1U')
   
   gc()
   
   #gather summary info
   return(data.frame(seq.name=seq.name,
-                    numb.cells=cellStats(grd, sum),
-                    grid.cell.size=res(grd)[1],
+                    numb.cells=terra::global(grd, "sum")[1,1],
+                    grid.cell.size=terra::res(grd)[1],
                     date.created=Sys.time(),
                     execution_time=paste(round(difftime(Sys.time(), start.time, units="min"),2)," minutes",sep=""),
                     num.locs=nrow(seq.sf),
