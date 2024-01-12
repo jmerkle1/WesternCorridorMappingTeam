@@ -1,221 +1,281 @@
 
+#packages
 library(sf)
 library(parallel)
 library(raster)
+library(terra)
+library(devtools)
 
-setwd("C:/Users/jmerkle_local/Desktop/new_mapp")
+# load up functions from github
+url <- "https://raw.githubusercontent.com/jmerkle1/WesternCorridorMappingTeam/main/MAPP3.x_code_workflow/functions"
+funs <- c("CalcBBMM","CalcCTMM","CalcDBBMM","CalcKernel","CalcLineBuff",
+          "CalcPopFootprint","CalcPopGrid","CalcPopUse","CalcSeqDistances")
+for(i in funs){
+  source_url(paste0(url,"/",i,".R"))
+}
+rm(url, funs)
 
-# create a practice dataset
-# library(foreign)
-# proj_of_dbfs="+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
-# seqs_fldr <- "C:/Users/jmerkle_local/Desktop/Pronghorn_Sublette_phaseII/sequences_SE"
-# fls <- list.files(seqs_fldr, ".dbf$")
-# d <- do.call(rbind, lapply(1:length(fls), function(i){
-#   db <- read.dbf(paste(seqs_fldr, fls[i],sep="/"), as.is=TRUE)
-#   db$mig <- sub(".dbf","",fls[i])
-#   return(db)
-# }))
-# d$date <- as.POSIXct(strptime(d$date,format = "%Y-%m-%d %H:%M:%S"), tz="GMT")  
-# d <- st_as_sf(d, coords = c("x","y"), dim="XY", crs=proj_of_dbfs)
-# saveRDS(d, paste0(getwd(), "/data4practice.rds"))
+# set WD to export folder from Migration Mapper 3.0
+setwd("C:/Users/jmerkle_local/Desktop/Mapp_Practice/Moose_Jackson_App3_CMT/Exports")
 
-# load up a practice dataset
-d <- readRDS("data4practice.rds")
+# which seasons do you want to do?
+dir("./sequences")  # there will be some values here. Put the ones you want in the next line
+seasons <- c("Fall","Spring")
+
+
 
 # ------------------#
 # code for app 4 ####
 # ------------------#
 
-
 # ---------------------------- #
 # 1. create overall raster ####
 # ---------------------------- #
 # Must do this based on ALL the data for the project, not just for one season !!!!
-# Also must remove the mortality and bad points!
 
-source("./functions/CalcPopGrid.R")
+## First make d using all the formatted sequqnces for all the subherds
+d <- readRDS("./workingFile.rds")
+d <- st_as_sfc(d[[2]])
+d <- data.frame(id=1:length(d), geometry=d)
+d <- st_as_sf(d, sf_column_name = "geometry")
+
 CalcPopGrid(datasf=d,
-            out.fldr=getwd(),
+            out.fldr= "./PopulationGrid",
             mult4buff=0.3,
             cell.size=500)
-rm(CalcPopGrid)
+rm(d)
 
 # ------------------------- #
 # 2. Calculate distances ####
 # ------------------------- #
-source("./functions/CalcSeqDistances.R")
-dists <- CalcSeqDistances(datasf=d, id.name="mig")
-head(dists)
-# could write this out:
-# write.csv(mig_dists, file=paste(metadata_fldr,"/migration_distance_info.csv",sep=""), row.names=FALSE)
-rm(CalcSeqDistances)
+
+for(e in 1:length(seasons)){
+  # read in the file
+  d <- readRDS(paste0("./sequences/", seasons[e], "/", seasons[e], ".rds"))
+  
+  dists <- CalcSeqDistances(datasf=d, id.name="mig")
+  head(dists)
+  
+  # write out:
+  write.csv(dists, 
+            file = paste0("./Metadata/", seasons[e], "_migration_distance_info.csv"),
+            row.names=FALSE)
+}
+
 
 # ---------------------------------- #
 # 3. Calculate UDs and Footprints ####
 # ---------------------------------- #
-source("./functions/CalcBBMM.R")
-source("./functions/CalcDBBMM.R")
-source("./functions/CalcKernel.R")
-source("./functions/CalcLineBuff.R")
-source("./functions/CalcCTMM.R")
 
-UD.fldr="./UDs"
-Footprint.fldr="./Footprints"
+Footprint.fldr <- "./Footprints"
+UD.fldr <- "./UDs"
 
-#check the new directories
-if(dir.exists(UD.fldr)==FALSE){
-  dir.create(UD.fldr)
-}
-if(length(dir(UD.fldr))> 0)
-  stop("Your UD.fldr Has something in it. It should be empty!")
 if(dir.exists(Footprint.fldr)==FALSE){
   dir.create(Footprint.fldr)
 }
 if(length(dir(Footprint.fldr))> 0)
   stop("Your Footprint.fldr Has something in it. It should be empty!")
 
-# method for calculating UDs and/or footprints
-opts <- c("LineBuff","BBMM","dBBMM","kernel","CTMM")
-opts <- "LineBuff"
+if(dir.exists(UD.fldr)==FALSE){
+  dir.create(UD.fldr)
+}
+if(length(dir(UD.fldr))> 0)
+  stop("Your UD.fldr Has something in it. It should be empty!")
 
-loopit <- unique(d$mig)  # you will loop over each id_yr_seas
-no_cores <- detectCores() - 1 # this should be the default, but the user could choose too
+# choose 1 method for calculating UDs and/or footprints
+## This needs to be a single method for the if() statements 
+#opts <- c("LineBuff","BBMM", "DBBMM","Kernel","CTMM")
+opts <- "BBMM"
 
-# Setup cluster
-clust <- makeCluster(no_cores) 
-# export the objects you need for your calculations from your environment to each node's environment
-clusterExport(clust, varlist=c("d","Footprint.fldr","opts","UD.fldr","loopit",
-                               "CalcBBMM","CalcDBBMM","CalcKernel","CalcLineBuff","CalcCTMM"))
-
-result.tbl <- do.call(rbind, clusterApplyLB(clust, 1:length(loopit), function(i){
+# must first loop over seasons
+for(e in 1:length(seasons)){
   
+  # read in the file
+  d <- readRDS(paste0("./sequences/", seasons[e], "/", seasons[e], ".rds"))
   
-  # need library() here for the packages your calculations require for your calculations
-  library(sf)
-  library(parallel)
-  library(raster)
-  
-  # grab the sequence of interest
-  tmp <- d[d$mig==loopit[i],]
-  
-  # prep some params that carry across the functions
-  mult4buff <- 0.3
-  Pop.grd="./PopGrid_empty.tif"
-  contour=99
-  max.timeout=3600*12
-  date.name="date"
-  UD.fldr=UD.fldr
-  Footprint.fldr=Footprint.fldr
-  
-  # use new functions!!!!
-  if(opts == "LineBuff"){
-    return(CalcLineBuff(
-      seq.sf=tmp,
-      seq.name=loopit[i],
-      date.name=date.name,
-      Footprint.fldr=Footprint.fldr,
-      Pop.grd=Pop.grd,
-      buff=200
-    ))
+  # create the folders
+  if(dir.exists(paste0(Footprint.fldr,"/",seasons[e]))==FALSE){
+    dir.create(paste0(Footprint.fldr,"/",seasons[e]))
   }
+  if(length(dir(paste0(Footprint.fldr,"/",seasons[e])))> 0)
+    stop("Your paste0(Footprint.fldr,"/",seasons[e]) Has something in it. It should be empty!")
   
-  if(opts == "BBMM"){
-    return(CalcBBMM(
-      seq.sf=tmp,
-      seq.name=loopit[i],
-      date.name=date.name,
-      UD.fldr=UD.fldr,
-      Footprint.fldr=Footprint.fldr,
-      Pop.grd=Pop.grd,
-      BMVar=NULL,
-      location.error=20,
-      max.lag=8,
-      contour=contour,
-      time.step=5,
-      mult4buff=mult4buff,
-      max.timeout=max.timeout
-    ))
+  if(dir.exists(paste0(UD.fldr,"/",seasons[e]))==FALSE){
+    dir.create(paste0(UD.fldr,"/",seasons[e]))
   }
+  if(length(dir(paste0(UD.fldr,"/",seasons[e])))> 0)
+    stop("Your paste0(UD.fldr,"/",seasons[e]) Has something in it. It should be empty!")
   
-  if(opts == "dBBMM"){
-   return(CalcDBBMM(
-     seq.sf=tmp,
-     seq.name=loopit[i],
-     date.name=date.name,
-     UD.fldr=UD.fldr,
-     Footprint.fldr=Footprint.fldr,
-     Pop.grd=Pop.grd,
-     location.error=20,
-     max.lag=8,
-     contour=contour,
-     dbbmm.margin=11,
-     dbbmm.window=31,
-     mult4buff=mult4buff,
-     max.timeout=max.timeout
-   )) 
-  }
-
-  if(opts == "kernel"){
-    return(CalcKernel(
-      seq.sf=tmp,
-      seq.name=loopit[i],
-      date.name=date.name,
-      UD.fldr=UD.fldr,
-      Footprint.fldr=Footprint.fldr,
-      Pop.grd=Pop.grd,
-      smooth.param=NULL,
-      contour=contour,
-      mult4buff=mult4buff,
-      subsample=NULL,
-      max.timeout=max.timeout
-    ))
-  }
+  loopit <- unique(d$mig)  # you will loop over each id_yr_seas
+  no_cores <- detectCores() - 5 # this should be the default, but the user could choose too
   
-  if(opts == "CTMM"){
-    return(CalcCTMM(
-      seq.sf=tmp,
-      seq.name=loopit[i],
-      date.name=date.name,
-      UD.fldr=UD.fldr,
-      Footprint.fldr=Footprint.fldr,
-      Pop.grd=Pop.grd,
-      Information.Criteria="AIC",
-      contour=contour,
-      mult4buff=mult4buff,
-      max.timeout=max.timeout
-    ))
-  }
+  # Setup cluster
+  clust <- makeCluster(no_cores) 
+  # export the objects you need for your calculations from your environment to each node's environment
+  clusterExport(clust, varlist=c("d","Footprint.fldr","UD.fldr", "opts","loopit",
+                                 "CalcBBMM","CalcLineBuff", "CalcDBBMM","CalcKernel",
+                                 "CalcCTMM","seasons","e"))
+  # i = 1
+  result.tbl <- do.call(rbind, clusterApplyLB(clust, 1:length(loopit), function(i){
+    
+    
+    # need library() here for the packages your calculations require for your calculations
+    library(sf)
+    library(terra)
+    
+    # grab the sequence of interest
+    tmp <- d[d$mig==loopit[i],]
+    
+    # prep some params that carry across the functions
+    mult4buff <- 0.3
+    contour = 99
+    max.timeout = 3600*12
+    date.name = "date"
+    Pop.grd = "./PopulationGrid/PopGrid_empty.tif"
+    
+    
+    # which function to use?
+    if(opts == "LineBuff"){
+      return(CalcLineBuff(
+        seq.sf = tmp,
+        seq.name = loopit[i],
+        date.name = date.name,
+        Footprint.fldr = paste0(Footprint.fldr,"/",seasons[e]),
+        Pop.grd = Pop.grd,
+        buff = 300
+      ))
+    }
+    
+    if(opts == "BBMM"){
+      return(CalcBBMM(
+        seq.sf = tmp,
+        seq.name = loopit[i],
+        date.name = date.name,
+        UD.fldr = paste0(UD.fldr,"/",seasons[e]),
+        Footprint.fldr = paste0(Footprint.fldr,"/",seasons[e]),
+        Pop.grd = Pop.grd,
+        BMVar = NULL,
+        location.error = 20,
+        max.lag = 8,
+        contour = contour,
+        time.step = 5,
+        mult4buff = mult4buff,
+        max.timeout = max.timeout
+      ))
+    }
+    
+    if(opts == "DBBMM"){
+      return(CalcDBBMM(
+        seq.sf=tmp,
+        seq.name=loopit[i],
+        date.name=date.name,
+        UD.fldr=paste0(UD.fldr,"/",seasons[e]),
+        Footprint.fldr=paste0(Footprint.fldr,"/",seasons[e]),
+        Pop.grd=Pop.grd,
+        location.error=20,
+        max.lag=8,
+        contour=contour,
+        dbbmm.margin=11,
+        dbbmm.window=31,
+        mult4buff=mult4buff,
+        max.timeout=max.timeout
+      ))
+    }
+    
+    if(opts == "Kernel"){
+      return(CalcKernel(
+        seq.sf=tmp,
+        seq.name=loopit[i],
+        date.name=date.name,
+        UD.fldr=paste0(UD.fldr,"/",seasons[e]),
+        Footprint.fldr=paste0(Footprint.fldr,"/",seasons[e]),
+        Pop.grd=Pop.grd,
+        smooth.param=NULL,
+        contour=contour,
+        mult4buff=mult4buff,
+        subsample=NULL,
+        max.timeout=max.timeout
+      ))
+    }
+    
+    if(opts == "CTMM"){
+      return(CalcCTMM(
+        seq.sf=tmp,
+        seq.name=loopit[i],
+        date.name=date.name,
+        UD.fldr=paste0(UD.fldr,"/",seasons[e]),
+        Footprint.fldr=paste0(Footprint.fldr,"/",seasons[e]),
+        Pop.grd=Pop.grd,
+        Information.Criteria="AIC",
+        contour=contour,
+        mult4buff=mult4buff,
+        max.timeout=max.timeout
+      ))
+    }
+    
+    
+  }))
+  stopCluster(clust)   # you must stop the parallelization framework
+  
+  head(result.tbl)
+  # View(result.tbl)
+  # write out result.tbl
+  write.csv(result.tbl, 
+            file = paste0("./Metadata/", seasons[e], "_metadata.csv"),
+            row.names = FALSE)
+  
+  print(paste0("Season ", seasons[e], " is done!"))
+  
+}  # end of loop over seasons
 
-}))
-stopCluster(clust)   # you must stop the parallelization framework
+# have a quick look at the results
+# load up all the Footprints
+foots <- rast(dir(paste0(Footprint.fldr,"/",seasons[1]), full.names = TRUE))
+plot(foots[[1]]) # plot one of them
+plot(sum(foots)) # plot the sum of all of them
 
+# load up all the UDs
+UDs <- rast(dir(paste0(UD.fldr,"/",seasons[1]), full.names = TRUE))
+plot(UDs[[1]])  # plot one of them
+plot(sum(UDs))  # plot the sum of all of them
 
-View(result.tbl)
-# write out result.tbl
-write.csv(result.tbl, file = "metadata.csv", row.names = FALSE)
-
-# have a look at the results
-foots <- stack(dir(Footprint.fldr, full.names = TRUE))
-raster::plot(sum(foots))
-# plot(d$geometry, add=T, pch=".")
-
-UDs <- stack(dir(UD.fldr, full.names = TRUE))
-raster::plot(mean(UDs))
-# plot(d$geometry, add=T, pch=".")
+# -------------------#
+# Population Outputs #
+# -------------------#
 
 # ------------------#
 # code for app 5 ####
 # ------------------#
 
-source("./CalcPopUse.R")
-source("./CalcPopFootprint.R")
+# folder output name
+out.fldr <- "./finalOutputs/Migration"
 
+# create the needed folders and check them
+if(dir.exists(out.fldr)==FALSE){
+  dir.create(out.fldr)
+}
+if(length(dir(out.fldr))> 0)
+  stop("Your out.fldr has something in it. It should be empty!")
+
+if(dir.exists(paste0(out.fldr,"/","popUseMerged"))==FALSE){
+  dir.create(paste0(out.fldr,"/","popUseMerged"))
+}
+if(length(dir(paste0(out.fldr,"/","popUseMerged")))> 0)
+  stop("Your paste0(out.fldr,"/", popUseMerged) has something in it. It should be empty!")
+
+if(dir.exists(paste0(out.fldr,"/","footPrintsMerged"))==FALSE){
+  dir.create(paste0(out.fldr,"/","footPrintsMerged"))
+}
+if(length(dir(paste0(out.fldr,"/","footPrintsMerged")))> 0)
+  stop("Your paste0(out.fldr,"/", footPrintsMerged) has something in it. It should be empty!")
+
+# calculate population use final products
 CalcPopUse(
-  UD.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/UDs_Test", 
-  out.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/UD_out", 
-  seas2merge = c("spring", "fall"), 
+  UD.fldr = UD.fldr, 
+  out.fldr = paste0(out.fldr, "/popUseMerged"), 
+  seas2merge = seasons, 
   udFootprintsToDrop = NULL,
-  merge.order = c("year", "id"),  
+  merge.order = c("id","year"),  
   contour = 99,   
   contour.type = "Area",    
   contour.levels = c(5,10,15,20,30,40,50,60,70,80,90),  
@@ -226,11 +286,12 @@ CalcPopUse(
   out.proj = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"  
 )
 
+# calculate population footprint final products
 CalcPopFootprint(
-  Foot.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_Test", 
-  out.fldr = "C:/Users/jmerkle_local/Desktop/Corridor_test/Footprints_out", 
+  Foot.fldr = Footprint.fldr, 
+  out.fldr = paste0(out.fldr, "/footPrintsMerged"), 
   udFootprintsToDrop = NULL,
-  seas2merge = c("spring", "fall"), 
+  seas2merge = seasons, 
   contour.levels = c(5,10,15,20,30),  
   min_area_drop = 20000,  
   min_area_fill = 20000,  
@@ -239,4 +300,18 @@ CalcPopFootprint(
   out.proj = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"  
 )
 
+# Check your folders! THey should match the folders that Migration Mapper 3.0 would do.
 
+# have a look at what you did
+Foot.conts <- st_read(paste0(out.fldr, "/footPrintsMerged"),
+                      "Footprint_contours")
+head(Foot.conts)
+Foot.conts <- Foot.conts[order(Foot.conts$contour),]
+table(Foot.conts$contour)
+plot(Foot.conts)
+
+Use.conts <- st_read(paste0(out.fldr, "/popUseMerged"),
+                      "Pop_use_contours")
+head(Use.conts)
+table(Use.conts$contour)
+plot(Use.conts)
