@@ -35,9 +35,16 @@ seasons <- c("Fall","Spring")
 
 ## First make d using all the formatted sequqnces for all the subherds
 d <- readRDS("./workingFile.rds")
-d <- st_as_sfc(d[[2]])
-d <- data.frame(id=1:length(d), geometry=d)
-d <- st_as_sf(d, sf_column_name = "geometry")
+meta <- readRDS("./configOptions.rds")
+d <- d[[2]]
+meta$masterCrs
+d <- st_as_sf(d, coords = c("x", "y"), 
+              crs=meta$masterCrs)
+head(d)
+
+if(dir.exists("./PopulationGrid")==FALSE){
+  dir.create("./PopulationGrid")
+}
 
 CalcPopGrid(datasf=d,
             out.fldr= "./PopulationGrid",
@@ -52,10 +59,15 @@ rm(d)
 for(e in 1:length(seasons)){
   # read in the file
   d <- readRDS(paste0("./sequences/", seasons[e], "/", seasons[e], ".rds"))
-  
+  d <- st_transform(d, crs=meta$masterCrs)
+          
   dists <- CalcSeqDistances(datasf=d, id.name="mig")
   head(dists)
-  
+    
+  if(dir.exists("./Metadata")==FALSE){
+    dir.create("./Metadata")
+  }
+          
   # write out:
   write.csv(dists, 
             file = paste0("./Metadata/", seasons[e], "_migration_distance_info.csv"),
@@ -92,7 +104,8 @@ for(e in 1:length(seasons)){
   
   # read in the file
   d <- readRDS(paste0("./sequences/", seasons[e], "/", seasons[e], ".rds"))
-  
+  d <- st_transform(d, crs=meta$masterCrs)
+          
   # create the folders
   if(dir.exists(paste0(Footprint.fldr,"/",seasons[e]))==FALSE){
     dir.create(paste0(Footprint.fldr,"/",seasons[e]))
@@ -247,6 +260,10 @@ plot(sum(UDs))  # plot the sum of all of them
 # code for app 5 ####
 # ------------------#
 
+if(dir.exists("./finalOutputs")==FALSE){
+  dir.create("./finalOutputs")
+}
+
 # folder output name
 out.fldr <- "./finalOutputs/Migration"
 
@@ -283,7 +300,7 @@ CalcPopUse(
   min_area_fill = 20000,  
   simplify = TRUE,     
   ksmooth_smoothness = 2,  
-  out.proj = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"  
+  out.proj = meta$masterCrs  
 )
 
 # calculate population footprint final products
@@ -297,7 +314,7 @@ CalcPopFootprint(
   min_area_fill = 20000,  
   simplify = TRUE,     
   ksmooth_smoothness = 2,  
-  out.proj = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"  
+  out.proj = meta$masterCrs  
 )
 
 # Check your folders! THey should match the folders that Migration Mapper 3.0 would do.
